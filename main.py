@@ -1,6 +1,7 @@
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
+from pydantic import BaseModel, EmailStr
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -29,15 +30,68 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# --- Pydantic Schema for Validation ---
+class UserCredentials(BaseModel):
+    email: str | None = None
+    password: str | None = None
+
 @app.get("/", description="Get API information and available endpoints.")
 def root():
     return {
         "name": "Auth Service API",
         "version": "1.0.0",
         "status": "active",
-        "endpoints": ["/", "/health", "/signup", "/login"]
+        "endpoints": ["/", "/health", "/auth/signup", "/auth/login"]
     }
 
 @app.get("/health", description="Check whether the API is running.")
 def health():
     return {"status": "ok"}
+
+# --- Stage 1: Signup Endpoint ---
+@app.post("/auth/signup", status_code=status.HTTP_201_CREATED, description="Register a new user.")
+def signup(credentials: UserCredentials):
+    if not credentials.email or not credentials.password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "Email and password are required"}
+        )
+    try:
+        response = supabase.auth.sign_up({
+            "email": credentials.email,
+            "password": credentials.password
+        })
+        return {
+            "message": "User registered successfully",
+            "user": response.user
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+# --- Stage 1: Login Endpoint ---
+@app.post("/auth/login", description="Authenticate a user and return access and refresh tokens.")
+def login(credentials: UserCredentials):
+    if not credentials.email or not credentials.password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "Email and password are required"}
+        )
+    try:
+        response = supabase.auth.sign_in_with_password({
+            "email": credentials.email,
+            "password": credentials.password
+        })
+        return {
+            "message": "Login successful",
+            "access_token": response.session.access_token,
+            "refresh_token": response.session.refresh_token,
+            "token_type": "bearer"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid login credentials"}
+        )
