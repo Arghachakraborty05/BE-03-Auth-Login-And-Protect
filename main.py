@@ -1,6 +1,6 @@
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Header
 from pydantic import BaseModel, EmailStr
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -95,3 +95,31 @@ def login(credentials: UserCredentials):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid login credentials"}
         )
+
+# --- Stage 2: Public Endpoint ---
+@app.get("/public/info", description="Public welcome route requiring no authentication.")
+def public_info():
+    return {"message": "Welcome stranger! This info is public."}
+
+
+# --- Stage 2: Unverified Protected Endpoint ---
+@app.get("/protected/profile", description="Protected route checking for presence of Authorization Bearer token.")
+def protected_profile(authorization: str | None = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Access token required"}
+        )
+    
+    # Extract token string after "Bearer "
+    token = authorization.split(" ")[1]
+    if not token.strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Access token required"}
+        )
+
+    return {
+        "message": "Access granted to protected profile (token presence verified)",
+        "token_received": token[:10] + "..." # Just showing a preview for now
+    }
