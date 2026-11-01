@@ -102,8 +102,8 @@ def public_info():
     return {"message": "Welcome stranger! This info is public."}
 
 
-# --- Stage 2: Unverified Protected Endpoint ---
-@app.get("/protected/profile", description="Protected route checking for presence of Authorization Bearer token.")
+# --- Stage 3: Strictly Verified Protected Endpoint ---
+@app.get("/protected/profile", description="Protected route strictly verifying token authenticity with Supabase.")
 def protected_profile(authorization: str | None = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
@@ -119,7 +119,40 @@ def protected_profile(authorization: str | None = Header(None)):
             detail={"error": "Access token required"}
         )
 
-    return {
-        "message": "Access granted to protected profile (token presence verified)",
-        "token_received": token[:10] + "..." # Just showing a preview for now
-    }
+    # Basic structural check: A JWT must have exactly 3 parts separated by dots (header.payload.signature)
+    token_parts = token.split(".")
+    if len(token_parts) != 3:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired token"}
+        )
+
+    try:
+        # Ask Supabase to verify the token and return the user
+        response = supabase.auth.get_user(token)
+
+        # If Supabase returns no user or data is missing, reject
+        if not response or not hasattr(response, "user") or not response.user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": "Invalid or expired token"}
+            )
+
+        user = response.user
+
+        return {
+            "message": "Access granted - Token verified successfully",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "created_at": user.created_at
+            }
+        }
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        # Catch any cryptographic signature failure or network/auth error from Supabase
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired token"}
+        )
