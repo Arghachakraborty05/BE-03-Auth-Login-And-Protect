@@ -1,6 +1,6 @@
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, status, Header
+from fastapi import FastAPI, HTTPException, status, Header, Depends, Response
 from pydantic import BaseModel, EmailStr
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -41,7 +41,7 @@ def root():
         "name": "Auth Service API",
         "version": "1.0.0",
         "status": "active",
-        "endpoints": ["/", "/health", "/auth/signup", "/auth/login"]
+        "endpoints": ["/", "/health", "/auth/signup", "/auth/login", "/public/info", "/protected/profile", "/protected/dashboard", "/auth/logout"]
     }
 
 @app.get("/health", description="Check whether the API is running.")
@@ -97,21 +97,18 @@ def login(credentials: UserCredentials):
         )
 
 # --- Stage 2: Public Endpoint ---
-@app.get("/public/info", description="Public welcome route requiring no authentication.")
+@app.get("/public/info", description="Public information endpoint.")
 def public_info():
     return {"message": "Welcome stranger! This info is public."}
 
-
-# --- Stage 3: Strictly Verified Protected Endpoint ---
-@app.get("/protected/profile", description="Protected route strictly verifying token authenticity with Supabase.")
-def protected_profile(authorization: str | None = Header(None)):
+# --- Stage 4: Reusable Auth Dependency (Middleware Guard) ---
+def get_current_user(authorization: str | None = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Access token required"}
         )
-    
-    # Extract token string after "Bearer "
+
     token = authorization.split(" ")[1]
     if not token.strip():
         raise HTTPException(
@@ -119,7 +116,6 @@ def protected_profile(authorization: str | None = Header(None)):
             detail={"error": "Access token required"}
         )
 
-    # Basic structural check: A JWT must have exactly 3 parts separated by dots (header.payload.signature)
     token_parts = token.split(".")
     if len(token_parts) != 3:
         raise HTTPException(
@@ -128,18 +124,26 @@ def protected_profile(authorization: str | None = Header(None)):
         )
 
     try:
-        # Ask Supabase to verify the token and return the user
         response = supabase.auth.get_user(token)
 
-        # If Supabase returns no user or data is missing, reject
         if not response or not hasattr(response, "user") or not response.user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={"error": "Invalid or expired token"}
             )
 
-        user = response.user
+        return response.user
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "Invalid or expired token"}
+        )
 
+# --- Stage 4: Protected Profile Endpoint ---
+@app.get("/protected/profile", description="Retrieve the profile of the authenticated user.")
+def protected_profile(user = Depends(get_current_user)):
         return {
             "message": "Access granted - Token verified successfully",
             "user": {
@@ -148,10 +152,28 @@ def protected_profile(authorization: str | None = Header(None)):
                 "created_at": user.created_at
             }
         }
-    except HTTPException as he:
-        raise he
+
+# --- Stage 4: Dashboard Endpoint ---
+@app.get("/protected/dashboard", description="Retrieve user dashboard metrics and details.")
+def protected_dashboard(user = Depends(get_current_user)):
+    return {
+        "message": "Welcome to your secure dashboard",
+        "user_email": user.email,
+        "metrics": {
+            "active_sessions": 1,
+            "account_status": "verified"
+        }
+    }
+
+# --- Stage 4: Logout Endpoint ---
+@app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT, description="Sign out the current user session.")
+def logout(user = Depends(get_current_user), authorization: str | None = Header(None)):
+    try:
+        # Extract token and sign out the session via Supabase Auth
+        token = authorization.split(" ")[1]
+        supabase.auth.sign_out()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
     except Exception as e:
-        # Catch any cryptographic signature failure or network/auth error from Supabase
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Invalid or expired token"}
