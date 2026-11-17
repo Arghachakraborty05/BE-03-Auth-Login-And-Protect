@@ -1,6 +1,7 @@
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, status, Header, Depends, Response
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -16,6 +17,9 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Initialize FastAPI security scheme for Swagger UI padlocks
+security = HTTPBearer()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -101,16 +105,10 @@ def login(credentials: UserCredentials):
 def public_info():
     return {"message": "Welcome stranger! This info is public."}
 
-# --- Stage 4: Reusable Auth Dependency (Middleware Guard) ---
-def get_current_user(authorization: str | None = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error": "Access token required"}
-        )
-
-    token = authorization.split(" ")[1]
-    if not token.strip():
+# --- Stage 5: Reusable Auth Dependency (Swagger Bearer Integration) ---
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    if not token or not token.strip():
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": "Access token required"}
