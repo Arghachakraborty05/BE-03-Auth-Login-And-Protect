@@ -38,7 +38,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Populate the .env file with the required Supabase credentials, then start the development server:
+Populate the `.env` file with the required Supabase credentials, then start the development server:
 
 ```bash
 uvicorn main:app --reload
